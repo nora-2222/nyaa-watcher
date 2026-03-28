@@ -1,0 +1,15 @@
+[package]
+name = "nyaa-watcher"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+slint = { version = "1", features = ["renderer-winit-skia"] }
+reqwest = { version = "0.12", features = ["blocking", "cookies", "gzip", "deflate"] }
+scraper = "0.22"
+image = { version = "0.25", default-features = false, features = ["png"] }
+open = "5"
+rfd = "0.14"
+
+[build-dependencies]
+slint-build = "1"

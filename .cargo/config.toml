@@ -1,0 +1,2 @@
+# crt-static triggers rav1e bindgen which requires LLVM.
+# VCRUNTIME is already present on Windows 10/11, so static CRT is unnecessary.

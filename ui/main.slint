@@ -1,0 +1,678 @@
+import { Button, ListView } from "std-widgets.slint";
+
+component Checkbox {
+    in property <bool> checked: false;
+    callback clicked();
+
+    TouchArea {
+        width: parent.width; height: parent.height;
+        
+        clicked => { root.clicked(); }
+    }
+    Rectangle {
+        width: 16px; height: 16px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        border-radius: 3px;
+        background: root.checked ? #2563eb : #1e1e2e;
+        border-color: root.checked ? #2563eb : #585b70;
+        border-width: 1.5px;
+        Text {
+            visible: root.checked;
+            width: parent.width; height: parent.height;
+            text: ""; color: white; font-size: 11px; font-weight: 700;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+    }
+}
+
+struct TorrentEntry {
+    category: string,
+    category-icon: image,
+    name: string,
+    view-link: string,
+    download-link: string,
+    magnet-link: string,
+    size: string,
+    date: string,
+    seeders: string,
+    leechers: string,
+    completed: string,
+    row-type: int,
+    checked: bool,
+}
+
+struct TorrentDetail {
+    title: string,
+    category: string,
+    date: string,
+    submitter: string,
+    seeders: string,
+    leechers: string,
+    file-size: string,
+    completed: string,
+    info-hash: string,
+    download-link: string,
+    magnet-link: string,
+}
+
+struct DownloadItem {
+    name: string,
+    download-link: string,
+    completed: bool,
+}
+
+export component MainWindow inherits Window {
+    title: "Nyaa Watcher";
+    width: 1280px;
+    height: 800px;
+    background: #1e1e2e;
+    default-font-family: "Yu Gothic UI";
+
+    in-out property <[TorrentEntry]> entries: [];
+    in-out property <int> current-page: 1;
+    in-out property <int> total-pages: 1;
+    in-out property <[int]> page-numbers: [];
+    in-out property <bool> loading: false;
+    in-out property <string> status-text: "";
+    in-out property <string> current-query: "";
+    in-out property <bool> all-checked: false;
+
+    // Detail popup
+    in-out property <bool> show-detail: false;
+    in-out property <bool> detail-loading: false;
+    in-out property <TorrentDetail> detail: {
+        title: "", category: "", date: "", submitter: "",
+        seeders: "", leechers: "", file-size: "", completed: "",
+        info-hash: "", download-link: "", magnet-link: "",
+    };
+
+    // Download panel
+    in-out property <bool> show-download: false;
+    in-out property <string> download-path: "";
+    in-out property <string> download-status: "";
+    in-out property <[DownloadItem]> download-queue: [];
+    in-out property <bool> is-downloading: false;
+
+    callback search-requested(string);
+    callback page-changed(int);
+    callback name-clicked(string);
+    callback toggle-checked(int, bool);
+    callback toggle-all-checked(bool);
+    callback close-detail();
+    callback show-download-panel();
+    callback close-download-panel();
+    callback start-download(string);
+    callback open-torrent(string);
+    callback open-magnet(string);
+    callback browse-path();
+    callback download-single(int);
+    callback add-to-queue();
+    callback remove-from-queue(int);
+    callback clear-queue();
+    callback clear-completed();
+    callback download-detail();
+
+    // Main layout
+    VerticalLayout {
+        padding: 10px;
+        spacing: 6px;
+
+        // Search bar
+        Rectangle {
+            height: 50px;
+            background: #2a2a3e;
+            border-radius: 8px;
+
+            HorizontalLayout {
+                padding: 8px;
+                spacing: 8px;
+
+                search-rect := Rectangle {
+                    horizontal-stretch: 1;
+                    background: search-input.has-focus ? #252537 : #1e1e2e;
+                    border-radius: 6px;
+                    border-color: search-input.has-focus ? #2563eb : #45475a;
+                    border-width: 1.5px;
+
+                    search-input := TextInput {
+                        x: 10px; width: parent.width - 20px; height: parent.height;
+                        color: #cdd6f4; font-size: 15px;
+                        vertical-alignment: center;
+                        accepted => { root.search-requested(self.text); }
+                    }
+                    Text {
+                        visible: search-input.text == "";
+                        x: 10px; width: parent.width - 20px; height: parent.height;
+                        text: "Search nyaa.si..."; color: #585b70; font-size: 13px;
+                        vertical-alignment: center;
+                    }
+                }
+
+                search-btn := TouchArea {
+                    width: 100px;
+                    clicked => { if (!root.loading) { root.search-requested(search-input.text); } }
+                    Rectangle {
+                        border-radius: 6px;
+                        background: root.loading ? #1e3a6e : (search-btn.has-hover ? #1d4ed8 : #2563eb);
+                        Text {
+                            width: parent.width; height: parent.height;
+                            text: root.loading ? "Loading..." : "Search";
+                            color: root.loading ? #6c7086 : white;
+                            font-size: 15px; font-weight: 700;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Status line
+        Rectangle {
+            height: 30px;
+
+            HorizontalLayout {
+                spacing: 8px;
+                dl-add-btn := TouchArea {
+                    width: 200px; 
+                    clicked => { root.add-to-queue(); }
+                    Rectangle {
+                        border-radius: 4px;
+                        background: dl-add-btn.has-hover ? #1d4ed8 : #2563eb;
+                        Text {
+                            width: parent.width; height: parent.height;
+                            text: "Download checked items"; color: white; font-size: 15px;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+                    }
+                }
+
+                Text {
+                    horizontal-stretch: 1;
+                    text: root.status-text; color: #6c7086; font-size: 15px;
+                    vertical-alignment: center; horizontal-alignment: center;
+                }
+
+                dl-status-btn := TouchArea {
+                    width: 200px; 
+                    clicked => { root.show-download-panel(); }
+                    Rectangle {
+                        border-radius: 4px;
+                        background: dl-status-btn.has-hover ? #45475a : #313244;
+                        Text {
+                            width: parent.width; height: parent.height;
+                            text: root.download-queue.length == 0
+                                ? "Download Status"
+                                : "Download Status (\{root.download-queue.length})";
+                            color: #cdd6f4; font-size: 15px;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Table header
+        Rectangle {
+            height: 30px;
+            background: #313244;
+            border-radius: 4px;
+
+            HorizontalLayout {
+                padding-left: 4px;
+                padding-right: 8px;
+                spacing: 4px;
+
+                Checkbox {
+                    width: 30px;
+                    checked: root.all-checked;
+                    clicked => { root.toggle-all-checked(!root.all-checked); }
+                }
+                Text { text: "Category";  width: 90px; color: #cdd6f4; font-weight: 700; font-size: 13px; vertical-alignment: center; }
+                Text { text: "Name";      horizontal-stretch: 1; color: #cdd6f4; font-weight: 700; font-size: 13px; vertical-alignment: center; }
+                Text { text: "Links";     width: 66px; color: #cdd6f4; font-weight: 700; font-size: 13px; vertical-alignment: center; horizontal-alignment: center; }
+                Text { text: "Size";      width: 88px; color: #cdd6f4; font-weight: 700; font-size: 13px; vertical-alignment: center; horizontal-alignment: center; }
+                Text { text: "Date";      width: 128px; color: #cdd6f4; font-weight: 700; font-size: 13px; vertical-alignment: center; horizontal-alignment: center; }
+                Text { text: "S"; width: 44px; color: #a6e3a1; font-weight: 700; font-size: 13px; vertical-alignment: center; horizontal-alignment: center; }
+                Text { text: "L"; width: 44px; color: #f38ba8; font-weight: 700; font-size: 13px; vertical-alignment: center; horizontal-alignment: center; }
+                Text { text: "C"; width: 44px; color: #cdd6f4; font-weight: 700; font-size: 13px; vertical-alignment: center; horizontal-alignment: center; }
+            }
+        }
+
+        // Table body
+        ListView {
+            vertical-stretch: 1;
+
+            for entry[i] in root.entries: Rectangle {
+                height: 34px;
+                background:
+                    entry.row-type == 1 ? (Math.mod(i, 2) == 0 ? #1a3228 : #162b22) :
+                    entry.row-type == 2 ? (Math.mod(i, 2) == 0 ? #321a1e : #2b161a) :
+                    entry.row-type == 3 ? (Math.mod(i, 2) == 0 ? #2e2a18 : #272413) :
+                    (Math.mod(i, 2) == 0 ? #1e1e2e : #181825);
+
+                HorizontalLayout {
+                    padding-left: 4px;
+                    padding-right: 8px;
+                    spacing: 4px;
+
+                    Checkbox {
+                        width: 30px;
+                        checked: entry.checked;
+                        clicked => { root.toggle-checked(i, !entry.checked); }
+                    }
+
+                    HorizontalLayout {
+                        width: 90px; spacing: 4px; padding-left: 2px;
+                        Image {
+                            width: 80px; height: 28px;
+                            y: (parent.height - self.height) / 2;
+                            image-fit: contain;
+                            source: entry.category-icon;
+                        }
+                        // Text {
+                        //     horizontal-stretch: 1;
+                        //     text: entry.category;
+                        //     font-size: 13px; color: #a6adc8;
+                        //     vertical-alignment: center; overflow: elide;
+                        // }
+                    }
+
+                    name-ta := TouchArea {
+                        horizontal-stretch: 1;
+                        
+                        clicked => { root.name-clicked(entry.view-link); }
+                        Text {
+                            x: 0; y: 0; width: parent.width; height: parent.height;
+                            text: entry.name; font-size: 13px;
+                            color: name-ta.has-hover ? #89b4fa : #cdd6f4;
+                            vertical-alignment: center; overflow: elide;
+                        }
+                    }
+
+                    // Links column
+                    HorizontalLayout {
+                        width: 66px; alignment: center; spacing: 4px;
+
+                        dl-ta := TouchArea {
+                            width: 28px; height: 28px; 
+                            y: (parent.height - self.height) / 2;
+                            clicked => { root.download-single(i); }
+                            Rectangle {
+                                border-radius: 4px;
+                                background: dl-ta.has-hover ? #1d4ed8 : #2563eb;
+                                Text { width: parent.width; height: parent.height; text: "DL"; color: white; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                        }
+
+                        mg-ta := TouchArea {
+                            width: 28px; height: 28px; 
+                            y: (parent.height - self.height) / 2;
+                            clicked => { root.open-magnet(entry.magnet-link); }
+                            Rectangle {
+                                border-radius: 4px;
+                                background: mg-ta.has-hover ? #b45309 : #d97706;
+                                Text { width: parent.width; height: parent.height; text: "MG"; color: white; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                        }
+                    }
+
+                    Text { text: entry.size;      width: 88px;  font-size: 13px; color: #a6adc8; vertical-alignment: center; horizontal-alignment: center; }
+                    Text { text: entry.date;      width: 128px; font-size: 13px; color: #a6adc8; vertical-alignment: center; horizontal-alignment: center; }
+                    Text { text: entry.seeders;   width: 44px;  font-size: 13px; color: #a6e3a1; vertical-alignment: center; horizontal-alignment: center; }
+                    Text { text: entry.leechers;  width: 44px;  font-size: 13px; color: #f38ba8; vertical-alignment: center; horizontal-alignment: center; }
+                    Text { text: entry.completed; width: 44px;  font-size: 13px; color: #a6adc8; vertical-alignment: center; horizontal-alignment: center; }
+                }
+
+                Rectangle { y: parent.height - 1px; height: 1px; background: #313244; }
+            }
+        }
+
+        // Pagination
+        Rectangle {
+            height: 46px;
+            background: #2a2a3e;
+            border-radius: 8px;
+
+            HorizontalLayout {
+                alignment: center; spacing: 4px; padding: 6px;
+
+                Button {
+                    text: "«"; width: 36px;
+                    enabled: root.current-page > 1 && !root.loading;
+                    clicked => { root.page-changed(root.current-page - 1); }
+                }
+
+                for pnum in root.page-numbers: pnum-ta := TouchArea {
+                    width: pnum == 0 ? 24px : 34px;
+                    clicked => { if (pnum != 0 && !root.loading) { root.page-changed(pnum); } }
+
+                    Rectangle {
+                        border-radius: 4px;
+                        background: pnum == 0 ? transparent
+                                  : (pnum == root.current-page ? #2563eb
+                                  : (pnum-ta.has-hover && !root.loading ? #45475a : transparent));
+                        Text {
+                            width: parent.width; height: parent.height;
+                            text: pnum == 0 ? "..." : "\{pnum}";
+                            color: pnum == 0 ? #45475a
+                                 : (pnum == root.current-page ? white : #cdd6f4);
+                            font-size: 13px;
+                            font-weight: pnum == root.current-page ? 700 : 400;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+                    }
+                }
+
+                Button {
+                    text: "»"; width: 36px;
+                    enabled: root.current-page < root.total-pages && !root.loading;
+                    clicked => { root.page-changed(root.current-page + 1); }
+                }
+            }
+        }
+    }
+
+    // Detail popup
+    if root.show-detail: Rectangle {
+        x: 0; y: 0;
+        width: root.width; height: root.height;
+        background: #000000b0;
+
+        TouchArea { width: parent.width; height: parent.height; clicked => { root.close-detail(); } }
+
+        Rectangle {
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            width: 740px; height: 400px;
+            background: #24273a;
+            border-color: #45475a; border-width: 1px; border-radius: 10px;
+            drop-shadow-color: #000000c0; drop-shadow-blur: 30px;
+            drop-shadow-offset-x: 0px; drop-shadow-offset-y: 6px;
+
+            TouchArea { width: parent.width; height: parent.height; }
+
+            VerticalLayout {
+                padding: 20px; spacing: 14px;
+
+                HorizontalLayout {
+                    spacing: 16px;
+
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.detail-loading ? "Loading..." : root.detail.title;
+                        color: #cdd6f4; font-size: 15px; font-weight: 700;
+                        overflow: elide; vertical-alignment: center;
+                    }
+
+                    x-btn := TouchArea {
+                        width: 28px; height: 28px; 
+                        clicked => { root.close-detail(); }
+                        Rectangle {
+                            border-radius: 14px;
+                            background: x-btn.has-hover ? #f38ba8 : #45475a;
+                            Text { width: parent.width; height: parent.height; text: "X"; color: white; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                    }
+                }
+
+                Rectangle { height: 1px; background: #45475a; }
+
+                GridLayout {
+                    spacing: 10px;
+                    vertical-stretch: 1;
+
+                    Row {
+                        Text { col: 0; text: "Category";  color: #6c7086; font-size: 13px; horizontal-alignment: right; vertical-alignment: center; }
+                        Text { col: 1; text: root.detail.category;  color: #cdd6f4; font-size: 13px; vertical-alignment: center; overflow: elide; }
+                        Text { col: 2; text: "Date";      color: #6c7086; font-size: 13px; horizontal-alignment: right; vertical-alignment: center; }
+                        Text { col: 3; text: root.detail.date;      color: #cdd6f4; font-size: 13px; vertical-alignment: center; }
+                    }
+                    Row {
+                        Text { col: 0; text: "Submitter"; color: #6c7086; font-size: 13px; horizontal-alignment: right; vertical-alignment: center; }
+                        Text { col: 1; text: root.detail.submitter; color: #cdd6f4; font-size: 13px; vertical-alignment: center; }
+                        Text { col: 2; text: "Seeders";   color: #6c7086; font-size: 13px; horizontal-alignment: right; vertical-alignment: center; }
+                        Text { col: 3; text: root.detail.seeders;   color: #a6e3a1; font-size: 13px; vertical-alignment: center; }
+                    }
+                    Row {
+                        Text { col: 0; text: "File size"; color: #6c7086; font-size: 13px; horizontal-alignment: right; vertical-alignment: center; }
+                        Text { col: 1; text: root.detail.file-size; color: #cdd6f4; font-size: 13px; vertical-alignment: center; }
+                        Text { col: 2; text: "Leechers";  color: #6c7086; font-size: 13px; horizontal-alignment: right; vertical-alignment: center; }
+                        Text { col: 3; text: root.detail.leechers;  color: #f38ba8; font-size: 13px; vertical-alignment: center; }
+                    }
+                    Row {
+                        Text { col: 0; text: "Completed"; color: #6c7086; font-size: 13px; horizontal-alignment: right; vertical-alignment: center; }
+                        Text { col: 1; text: root.detail.completed; color: #cdd6f4; font-size: 13px; vertical-alignment: center; }
+                        Rectangle { col: 2; colspan: 2; }
+                    }
+                    Row {
+                        Text { col: 0; text: "Info Hash"; color: #6c7086; font-size: 13px; horizontal-alignment: right; vertical-alignment: center; }
+                        Text { col: 1; colspan: 3; text: root.detail.info-hash; color: #89b4fa; font-size: 13px; vertical-alignment: center; overflow: elide; }
+                    }
+                }
+
+                Rectangle { height: 1px; background: #45475a; }
+
+                HorizontalLayout {
+                    alignment: center; spacing: 12px;
+
+                    dl-btn := TouchArea {
+                        width: 150px; height: 38px; 
+                        clicked => { root.download-detail(); }
+                        Rectangle {
+                            border-radius: 6px;
+                            background: dl-btn.has-hover ? #1d4ed8 : #2563eb;
+                            Text { width: parent.width; height: parent.height; text: "Download Torrent"; color: white; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                    }
+
+                    mg-btn := TouchArea {
+                        width: 150px; height: 38px; 
+                        clicked => { root.open-magnet(root.detail.magnet-link); }
+                        Rectangle {
+                            border-radius: 6px;
+                            background: mg-btn.has-hover ? #b45309 : #d97706;
+                            Text { width: parent.width; height: parent.height; text: "Magnet Link"; color: white; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Download status board
+    if root.show-download: Rectangle {
+        x: 0; y: 0;
+        width: root.width; height: root.height;
+        background: #000000a0;
+
+        TouchArea { width: parent.width; height: parent.height; clicked => { root.close-download-panel(); } }
+
+        Rectangle {
+            x: root.width - self.width; y: 0;
+            width: 680px; height: root.height;
+            background: #181825;
+            border-color: #45475a; border-width: 1px;
+
+            TouchArea { width: parent.width; height: parent.height; }
+
+            VerticalLayout {
+                padding: 16px; spacing: 10px;
+
+                // Header
+                HorizontalLayout {
+                    Text { horizontal-stretch: 1; text: "Download status"; color: #cdd6f4; font-size: 15px; font-weight: 700; vertical-alignment: center; }
+                    xd-btn := TouchArea {
+                        width: 28px; height: 28px; 
+                        clicked => { root.close-download-panel(); }
+                        Rectangle {
+                            border-radius: 14px;
+                            background: xd-btn.has-hover ? #f38ba8 : #45475a;
+                            Text { width: parent.width; height: parent.height; text: "X"; color: white; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                    }
+                }
+
+                Rectangle { height: 1px; background: #45475a; }
+
+                // Queue count label + clear all button
+                HorizontalLayout {
+                    height: 22px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.download-queue.length == 0
+                            ? "The waiting list is empty."
+                            : "waiting list (\{root.download-queue.length}):";
+                        color: #6c7086; font-size: 13px;
+                        vertical-alignment: center;
+                    }
+                    if root.download-queue.length > 0: HorizontalLayout {
+                        spacing: 4px;
+                        clear-done-btn := TouchArea {
+                            width: 110px;
+                            clicked => { root.clear-completed(); }
+                            Rectangle {
+                                border-radius: 4px;
+                                background: clear-done-btn.has-hover ? #40a878 : #313244;
+                                Text {
+                                    width: parent.width; height: parent.height;
+                                    text: "Remove done"; color: #a6e3a1; font-size: 13px;
+                                    horizontal-alignment: center; vertical-alignment: center;
+                                }
+                            }
+                        }
+                        clear-btn := TouchArea {
+                            width: 90px;
+                            clicked => { root.clear-queue(); }
+                            Rectangle {
+                                border-radius: 4px;
+                                background: clear-btn.has-hover ? #f38ba8 : #313244;
+                                Text {
+                                    width: parent.width; height: parent.height;
+                                    text: "Remove all"; color: #f38ba8; font-size: 13px;
+                                    horizontal-alignment: center; vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Queue list with individual delete buttons
+                ListView {
+                    vertical-stretch: 1;
+
+                    for item[i] in root.download-queue: Rectangle {
+                        height: 36px;
+                        background: item.completed
+                            ? (Math.mod(i, 2) == 0 ? #1a3228 : #162b22)
+                            : (Math.mod(i, 2) == 0 ? #1e1e2e : #181825);
+
+                        HorizontalLayout {
+                            padding-left: 8px; padding-right: 6px; spacing: 6px;
+
+                            Text {
+                                horizontal-stretch: 1;
+                                text: item.name; font-size: 13px;
+                                color: item.completed ? #a6e3a1 : #cdd6f4;
+                                vertical-alignment: center; overflow: elide;
+                            }
+
+                            del-btn := TouchArea {
+                                width: 66px; height: 22px; 
+                                y: (parent.height - self.height) / 2;
+                                clicked => { root.remove-from-queue(i); }
+                                Rectangle {
+                                    border-radius: 4px;
+                                    background: del-btn.has-hover ? #f38ba8 : #313244;
+                                    Text { width: parent.width; height: parent.height; text: "Remove"; color: #cdd6f4; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                                }
+                            }
+                        }
+
+                        Rectangle { y: parent.height - 1px; height: 1px; background: #313244; }
+                    }
+                }
+
+                Rectangle { height: 1px; background: #45475a; }
+
+                // Download status
+                Rectangle {
+                    height: 36px;
+                    background: #1e1e2e;
+                    border-radius: 4px;
+                    Text {
+                        x: 8px; y: 0; width: parent.width - 16px; height: parent.height;
+                        text: root.download-status == "" ? "Ready" : root.download-status;
+                        color: root.download-status == "" ? #45475a : #89dceb;
+                        font-size: 15px; vertical-alignment: center; overflow: elide;
+                    }
+                }
+
+                Rectangle { height: 1px; background: #45475a; }
+
+                Text { text: "Save path:"; color: #6c7086; font-size: 15px; }
+
+                HorizontalLayout {
+                    spacing: 6px;
+
+                    path-rect := Rectangle {
+                        horizontal-stretch: 1;
+                        height: 36px;
+                        background: path-input.has-focus ? #252537 : #1e1e2e;
+                        border-radius: 6px;
+                        border-color: path-input.has-focus ? #2563eb : #45475a;
+                        border-width: 1.5px;
+
+                        path-input := TextInput {
+                            x: 10px; width: parent.width - 20px; height: parent.height;
+                            text <=> root.download-path;
+                            read-only: root.is-downloading;
+                            color: root.is-downloading ? #45475a : #cdd6f4; font-size: 13px;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            visible: path-input.text == "";
+                            x: 10px; width: parent.width - 20px; height: parent.height;
+                            text: ".\\torrent"; color: #585b70; font-size: 13px;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    browse-btn := TouchArea {
+                        width: 100px; height: 36px;
+                        mouse-cursor: root.is-downloading ? default : pointer;
+                        clicked => { if (!root.is-downloading) { root.browse-path(); } }
+                        Rectangle {
+                            border-radius: 4px;
+                            border-color: #45475a; border-width: 1px;
+                            background: root.is-downloading ? #252537 : (browse-btn.has-hover ? #45475a : #313244);
+                            Text {
+                                width: parent.width; height: parent.height;
+                                text: "Browse...";
+                                color: root.is-downloading ? #45475a : #cdd6f4; font-size: 15px;
+                                horizontal-alignment: center; vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
+                start-btn := TouchArea {
+                    height: 40px;
+                    mouse-cursor: root.is-downloading ? default : pointer;
+                    clicked => { if (!root.is-downloading) { root.start-download(root.download-path); } }
+                    Rectangle {
+                        border-radius: 6px;
+                        background: root.is-downloading ? #1e3a6e : (start-btn.has-hover ? #1d4ed8 : #2563eb);
+                        Text {
+                            width: parent.width; height: parent.height;
+                            text: root.is-downloading ? "Downloading..." : "Download .torrent files";
+                            color: root.is-downloading ? #6c7086 : white;
+                            font-size: 15px; font-weight: 700;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
